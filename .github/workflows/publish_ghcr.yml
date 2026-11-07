@@ -1,0 +1,74 @@
+#
+# Build do fork, publicado no GHCR.
+#
+# Existe separado de publish_docker_image.yml de proposito: aquele e o workflow
+# do upstream, empurra para evoapicloud/evolution-go no Docker Hub e depende de
+# secrets que o fork nao tem. Mexer nele faria todo rebase com o upstream
+# conflitar. Este arquivo so existe aqui, entao o rebase nao encosta nele.
+#
+# So amd64: o destino e uma EC2 t3.micro (x86_64). Build multiplataforma com
+# QEMU custaria varios minutos a mais para um artefato que ninguem usa.
+#
+name: Publish fork image to GHCR
+
+on:
+  push:
+    branches:
+      - fix/sqlstore-pool-leak
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compose tags
+        id: tags
+        run: |
+          version="$(cat VERSION 2>/dev/null || echo '0.0.0')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/evolution-go" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.version }}-poolfix
+            ${{ steps.tags.outputs.image }}:${{ steps.tags.outputs.version }}-poolfix-${{ steps.tags.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.tags.outputs.version }}-poolfix
+
+      # O digest e o que vai pinado no deploy, nao a tag. Fica no log e no
+      # summary para nao precisar inspecionar a imagem depois do pull.
+      - name: Report digest
+        run: |
+          {
+            echo "### Imagem publicada"
+            echo ""
+            echo '```'
+            echo "${{ steps.tags.outputs.image }}@${{ steps.build.outputs.digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
