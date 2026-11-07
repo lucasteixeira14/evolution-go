@@ -297,25 +297,26 @@ func initAuthDB(config *config.Config) (*sql.DB, string, error) {
 	return db, exPath, nil
 }
 
-func initPostgresAuthDB(config *config.Config) (*sql.DB, error) {
-	if config.PostgresAuthDB == "" {
+// O parametro se chama cfg, e nao config, porque o corpo precisa chamar
+// config.ApplyPoolSettings: um parametro chamado config sombreia o pacote.
+func initPostgresAuthDB(cfg *config.Config) (*sql.DB, error) {
+	if cfg.PostgresAuthDB == "" {
 		return nil, nil
 	}
 
-	if err := config.EnsureDBExists(config.PostgresAuthDB); err != nil {
+	if err := cfg.EnsureDBExists(cfg.PostgresAuthDB); err != nil {
 		logger.LogWarn("Auto-setup auth DB failed (will try connecting anyway): %v", err)
 	}
 
-	db, err := sql.Open("postgres", config.PostgresAuthDB)
+	db, err := sql.Open("postgres", cfg.PostgresAuthDB)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao conectar ao banco AUTH PostgreSQL: %v", err)
 	}
 
-	// Configurar pool de conexões para evitar conexões ociosas não fechadas
-	db.SetMaxOpenConns(25)                 // Máximo de 25 conexões abertas simultaneamente
-	db.SetMaxIdleConns(5)                  // Máximo de 5 conexões ociosas no pool
-	db.SetConnMaxLifetime(5 * time.Minute) // Reconectar após 5 minutos para evitar timeouts
-	db.SetConnMaxIdleTime(1 * time.Minute) // Fechar conexões ociosas após 1 minuto
+	// Configurar pool de conexões para evitar conexões ociosas não fechadas.
+	// Este e o pool que o sqlstore do whatsmeow passou a reaproveitar, entao o
+	// teto daqui vale tambem para as conexoes de device store das instancias.
+	config.ApplyPoolSettings(db, "auth")
 
 	err = db.Ping()
 	if err != nil {

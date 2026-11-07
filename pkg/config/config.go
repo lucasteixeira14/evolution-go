@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gomessguii/logger"
 	"gorm.io/driver/postgres"
@@ -169,10 +168,7 @@ func (c *Config) CreateUsersDB() (*gorm.DB, error) {
 	}
 
 	// Configurar pool de conexões para evitar conexões ociosas não fechadas
-	sqlDB.SetMaxOpenConns(25)                 // Máximo de 25 conexões abertas simultaneamente
-	sqlDB.SetMaxIdleConns(5)                  // Máximo de 5 conexões ociosas no pool
-	sqlDB.SetConnMaxLifetime(5 * time.Minute) // Reconectar após 5 minutos para evitar timeouts
-	sqlDB.SetConnMaxIdleTime(1 * time.Minute) // Fechar conexões ociosas após 1 minuto
+	ApplyPoolSettings(sqlDB, "users")
 
 	return db, nil
 }
@@ -194,10 +190,7 @@ func (c *Config) CreateAuthDB() (*sql.DB, error) {
 	}
 
 	// Configurar pool de conexões para evitar conexões ociosas não fechadas
-	db.SetMaxOpenConns(25)                 // Máximo de 25 conexões abertas simultaneamente
-	db.SetMaxIdleConns(5)                  // Máximo de 5 conexões ociosas no pool
-	db.SetConnMaxLifetime(5 * time.Minute) // Reconectar após 5 minutos para evitar timeouts
-	db.SetConnMaxIdleTime(1 * time.Minute) // Fechar conexões ociosas após 1 minuto
+	ApplyPoolSettings(db, "auth(config)")
 
 	// Testar a conexão
 	err = db.Ping()
