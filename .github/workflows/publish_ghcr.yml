@@ -61,6 +61,36 @@ jobs:
           build-args: |
             VERSION=${{ steps.tags.outputs.version }}-poolfix
 
+      # Tarball do mesmo build, para quem consome a imagem sem credencial de
+      # registry: o pacote no GHCR e privado, e a EC2 de destino tem permissao
+      # de pull apenas no ECR da conta, nunca no GHCR. Baixar o artifact exige
+      # so escopo `repo`, que o deploy ja tem — diferente de `read:packages`.
+      # O cache da etapa anterior esta quente, entao isto nao recompila nada.
+      - name: Build image tarball
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: evolution-go:${{ steps.tags.outputs.version }}-poolfix-${{ steps.tags.outputs.sha }}
+          cache-from: type=gha
+          build-args: |
+            VERSION=${{ steps.tags.outputs.version }}-poolfix
+
+      - name: Pack tarball
+        run: |
+          docker save "evolution-go:${{ steps.tags.outputs.version }}-poolfix-${{ steps.tags.outputs.sha }}" \
+            | gzip -1 > evolution-go-image.tar.gz
+          ls -lh evolution-go-image.tar.gz
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: evolution-go-image
+          path: evolution-go-image.tar.gz
+          retention-days: 7
+          compression-level: 0
+
       # O digest e o que vai pinado no deploy, nao a tag. Fica no log e no
       # summary para nao precisar inspecionar a imagem depois do pull.
       - name: Report digest
@@ -70,5 +100,6 @@ jobs:
             echo ""
             echo '```'
             echo "${{ steps.tags.outputs.image }}@${{ steps.build.outputs.digest }}"
+            echo "tag local no tarball: evolution-go:${{ steps.tags.outputs.version }}-poolfix-${{ steps.tags.outputs.sha }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
