@@ -792,12 +792,25 @@ func (mycli *MyClient) handleQRCodes(codes []string) {
 					mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] QR max-count reached but passkey ceremony active — not tearing down", instanceID)
 					return
 				}
+				// O guard do topo do loop viu Store.ID nil, mas o PairSuccess
+				// pode ter chegado entre aquela checagem e esta. Se pareou, não
+				// existe timeout a honrar: sair sem encostar na sessão.
+				if mycli.WAClient.Store.ID != nil {
+					mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] QR max-count reached but the client paired meanwhile — not tearing down", instanceID)
+					return
+				}
 				mycli.loggerWrapper.GetLogger(instanceID).LogWarn("[%s] Maximum QR code count reached (%d), forcing logout and QRTimeout", instanceID, mycli.config.QrcodeMaxCount)
 
-				if mycli.WAClient.IsConnected() {
+				// Logout só faz sentido se ESTE client pareou (Store.ID setado).
+				// Sem JID o Logout() falha com "the store doesn't contain a
+				// device JID" e deixa o client inconsistente — o /send/text
+				// seguinte pendura 75s e devolve 500. Incidente 2026-11-08.
+				if mycli.WAClient.Store.ID != nil && mycli.WAClient.IsConnected() {
 					if err := mycli.WAClient.Logout(context.Background()); err != nil {
 						mycli.loggerWrapper.GetLogger(instanceID).LogWarn("[%s] Error during forced logout: %v", instanceID, err)
 					}
+				} else if mycli.WAClient.Store.ID == nil {
+					mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] Skipping forced logout: this client never paired (no device JID in store)", instanceID)
 				}
 				mycli.teardownQR(fmt.Sprintf("Maximum QR code count (%d) reached", mycli.config.QrcodeMaxCount), true)
 				return
@@ -902,6 +915,28 @@ func (mycli *MyClient) teardownQR(reason string, forceLogout bool) {
 		if mycli.config.AmqpGlobalEnabled || mycli.config.NatsGlobalEnabled {
 			go mycli.service.SendToGlobalQueues("QRTimeout", values, instanceID)
 		}
+	}
+
+	// GUARDA DE DONO — o killChannel é compartilhado por instanceId. Se este
+	// client não é mais o client registrado da instância, ou se a instância já
+	// tem uma sessão pareada no ar, este teardown está obsoleto: sinalizar aqui
+	// mataria a sessão viva. Foi exatamente o que aconteceu em 2026-11-08: um
+	// segundo client (criado pela corrida entre /instance/connect e
+	// /instance/qr) esgotou o QR max-count e derrubou o client que havia
+	// pareado. O zumbi se desconecta sozinho e sai calado.
+	if owner, exists := mycli.myClientPointer[instanceID]; exists && owner != mycli {
+		mycli.loggerWrapper.GetLogger(instanceID).LogWarn("[%s] Stale QR teardown: another client owns this instance — disconnecting self without signaling kill channel", instanceID)
+		if mycli.WAClient != nil {
+			mycli.WAClient.Disconnect()
+		}
+		return
+	}
+	if live, exists := mycli.clientPointer[instanceID]; exists && live != nil && live.IsLoggedIn() {
+		mycli.loggerWrapper.GetLogger(instanceID).LogWarn("[%s] Stale QR teardown: instance has a paired session — disconnecting self without signaling kill channel", instanceID)
+		if mycli.WAClient != nil && mycli.WAClient.Store.ID == nil {
+			mycli.WAClient.Disconnect()
+		}
+		return
 	}
 
 	// Signal StartClient's select loop to disconnect and clean up the shared
