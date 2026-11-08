@@ -1,4 +1,5 @@
-FROM golang:1.25.0-alpine AS build
+# Go 1.26: exigencia do whatsmeow a partir de v0.0.0-20261107 (go.mod: go 1.26.0).
+FROM golang:1.26-alpine AS build
 
 RUN apk update && apk add --no-cache git build-base libjpeg-turbo-dev libwebp-dev
 
